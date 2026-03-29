@@ -1,0 +1,7 @@
+{
+  "name": "chicken-id",
+  "version": "1.0.0",
+  "scripts": {
+    "dev": "npx cornice-agent run node index.js"
+  }
+}

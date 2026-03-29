@@ -1,0 +1,473 @@
+const http = require('http');
+const PORT = process.env.PORT || 3001;
+
+const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Chicken Cluck Identifier</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: linear-gradient(135deg, #fef9e7 0%, #fdebd0 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #2c3e50;
+  }
+  .app {
+    text-align: center;
+    max-width: 480px;
+    width: 100%;
+    padding: 40px 20px;
+  }
+  .logo { font-size: 64px; margin-bottom: 8px; }
+  h1 { font-size: 28px; font-weight: 700; margin-bottom: 4px; }
+  .subtitle { color: #7f8c8d; font-size: 14px; margin-bottom: 32px; }
+
+  /* Record button */
+  .record-btn {
+    width: 120px; height: 120px;
+    border-radius: 50%;
+    border: 4px solid #e74c3c;
+    background: #fff;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.2s;
+    position: relative;
+    outline: none;
+  }
+  .record-btn:hover { background: #fdf2f2; transform: scale(1.05); }
+  .record-btn.recording {
+    background: #e74c3c;
+    animation: pulse 1s infinite;
+  }
+  .record-btn .mic { font-size: 40px; transition: filter 0.2s; }
+  .record-btn.recording .mic { filter: brightness(10); }
+  @keyframes pulse {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(231,76,60,0.4); }
+    50% { box-shadow: 0 0 0 20px rgba(231,76,60,0); }
+  }
+  .record-label {
+    display: block;
+    margin-top: 12px;
+    font-size: 13px;
+    color: #7f8c8d;
+    min-height: 20px;
+  }
+
+  /* Visualizer */
+  .visualizer {
+    height: 60px;
+    margin: 24px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 3px;
+  }
+  .bar {
+    width: 4px;
+    background: #e74c3c;
+    border-radius: 2px;
+    transition: height 0.05s;
+    height: 4px;
+  }
+
+  /* Analyzing state */
+  .analyzing {
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+    margin: 24px 0;
+  }
+  .analyzing.active { display: flex; }
+  .spinner {
+    width: 48px; height: 48px;
+    border: 4px solid #f0e6d3;
+    border-top-color: #e67e22;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .analyzing-text { font-size: 14px; color: #7f8c8d; }
+
+  /* Result card */
+  .result {
+    display: none;
+    background: #fff;
+    border-radius: 16px;
+    padding: 28px;
+    margin-top: 24px;
+    box-shadow: 0 4px 20px rgba(0,0,0,0.08);
+    text-align: center;
+    animation: slideUp 0.4s ease-out;
+  }
+  .result.active { display: block; }
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(20px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .result-emoji { font-size: 56px; margin-bottom: 12px; }
+  .result-breed { font-size: 22px; font-weight: 700; color: #d35400; }
+  .result-confidence {
+    display: inline-block;
+    margin-top: 6px;
+    padding: 4px 12px;
+    background: #eafaf1;
+    color: #27ae60;
+    border-radius: 12px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .result-facts {
+    margin-top: 16px;
+    text-align: left;
+    font-size: 14px;
+    line-height: 1.6;
+    color: #555;
+  }
+  .result-facts li { margin-bottom: 4px; }
+  .trait-bar-wrap {
+    margin-top: 16px;
+    text-align: left;
+  }
+  .trait {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+    font-size: 13px;
+  }
+  .trait-label { width: 80px; color: #7f8c8d; text-align: right; }
+  .trait-track {
+    flex: 1;
+    height: 8px;
+    background: #f0e6d3;
+    border-radius: 4px;
+    overflow: hidden;
+  }
+  .trait-fill {
+    height: 100%;
+    border-radius: 4px;
+    transition: width 0.6s ease-out;
+  }
+  .try-again {
+    margin-top: 20px;
+    padding: 10px 24px;
+    background: #e67e22;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  .try-again:hover { background: #d35400; }
+
+  .error { color: #e74c3c; font-size: 13px; margin-top: 12px; display: none; }
+  .error.active { display: block; }
+</style>
+</head>
+<body>
+<div class="app">
+  <div class="logo">&#x1F414;</div>
+  <h1>Cluck ID</h1>
+  <p class="subtitle">Identify chicken breeds by their cluck</p>
+
+  <div class="visualizer" id="visualizer"></div>
+
+  <button class="record-btn" id="recordBtn">
+    <span class="mic">&#x1F3A4;</span>
+  </button>
+  <span class="record-label" id="recordLabel">Tap to record a cluck</span>
+
+  <div class="analyzing" id="analyzing">
+    <div class="spinner"></div>
+    <div class="analyzing-text">Analyzing cluck pattern...</div>
+  </div>
+
+  <p class="error" id="error"></p>
+
+  <div class="result" id="result">
+    <div class="result-emoji" id="resultEmoji"></div>
+    <div class="result-breed" id="resultBreed"></div>
+    <div class="result-confidence" id="resultConf"></div>
+    <div class="trait-bar-wrap" id="traits"></div>
+    <ul class="result-facts" id="resultFacts"></ul>
+    <button class="try-again" id="tryAgain">Try Another Cluck</button>
+  </div>
+</div>
+
+<script>
+const BREEDS = [
+  {
+    name: 'Rhode Island Red',
+    emoji: '&#x1F414;',
+    color: '#c0392b',
+    facts: ['Classic American dual-purpose breed', 'Known for loud, assertive clucking', 'Excellent egg layers \u2014 up to 300 eggs/year'],
+    pitch: [180, 350], loudness: [0.5, 1], duration: [0.8, 2],
+    traits: { Loudness: 85, Pitch: 45, Tempo: 60, Sass: 75 }
+  },
+  {
+    name: 'Leghorn',
+    emoji: '&#x1F413;',
+    color: '#f39c12',
+    facts: ['The breed behind Foghorn Leghorn', 'High-pitched, rapid clucking style', 'Originated in Tuscany, Italy'],
+    pitch: [350, 600], loudness: [0.3, 0.7], duration: [0.3, 0.8],
+    traits: { Loudness: 55, Pitch: 90, Tempo: 85, Sass: 95 }
+  },
+  {
+    name: 'Silkie',
+    emoji: '&#x1F425;',
+    color: '#8e44ad',
+    facts: ['Fluffy, fur-like plumage', 'Soft, gentle clucking \u2014 almost a purr', 'Known as the lap dog of chickens'],
+    pitch: [250, 400], loudness: [0.05, 0.35], duration: [0.5, 1.5],
+    traits: { Loudness: 20, Pitch: 65, Tempo: 40, Sass: 30 }
+  },
+  {
+    name: 'Plymouth Rock',
+    emoji: '&#x1F414;',
+    color: '#2c3e50',
+    facts: ['Calm and friendly temperament', 'Steady, rhythmic cluck pattern', 'One of America\u2019s oldest breeds'],
+    pitch: [200, 380], loudness: [0.3, 0.6], duration: [0.6, 1.5],
+    traits: { Loudness: 50, Pitch: 50, Tempo: 50, Sass: 40 }
+  },
+  {
+    name: 'Cochin',
+    emoji: '&#x1F414;',
+    color: '#d4a574',
+    facts: ['Giant, fluffy, feathered feet', 'Deep, slow, rumbling cluck', 'Gentle giants of the chicken world'],
+    pitch: [120, 250], loudness: [0.4, 0.8], duration: [1, 3],
+    traits: { Loudness: 65, Pitch: 20, Tempo: 25, Sass: 20 }
+  },
+  {
+    name: 'Australorp',
+    emoji: '&#x1F413;',
+    color: '#1a5276',
+    facts: ['World record: 364 eggs in 365 days', 'Confident, melodic clucking', 'Glossy black plumage with green sheen'],
+    pitch: [220, 400], loudness: [0.4, 0.75], duration: [0.5, 1.2],
+    traits: { Loudness: 60, Pitch: 55, Tempo: 70, Sass: 65 }
+  },
+  {
+    name: 'Polish',
+    emoji: '&#x1F414;',
+    color: '#16a085',
+    facts: ['Wild crest of feathers on their head', 'Erratic, surprised-sounding clucks', 'Often startled by their own shadow'],
+    pitch: [300, 550], loudness: [0.2, 0.6], duration: [0.2, 0.6],
+    traits: { Loudness: 40, Pitch: 80, Tempo: 90, Sass: 100 }
+  },
+  {
+    name: 'Orpington',
+    emoji: '&#x1F425;',
+    color: '#e67e22',
+    facts: ['Big, fluffy, and golden', 'Low, contented clucking', 'The golden retriever of chickens'],
+    pitch: [150, 300], loudness: [0.25, 0.55], duration: [0.8, 2],
+    traits: { Loudness: 35, Pitch: 30, Tempo: 35, Sass: 15 }
+  }
+];
+
+let audioCtx, analyser, mic, stream, isRecording = false;
+let animFrame, recordStart;
+const NUM_BARS = 40;
+
+// Create visualizer bars
+const viz = document.getElementById('visualizer');
+for (let i = 0; i < NUM_BARS; i++) {
+  const bar = document.createElement('div');
+  bar.className = 'bar';
+  viz.appendChild(bar);
+}
+const bars = viz.querySelectorAll('.bar');
+
+const btn = document.getElementById('recordBtn');
+const label = document.getElementById('recordLabel');
+const analyzingEl = document.getElementById('analyzing');
+const resultEl = document.getElementById('result');
+const errorEl = document.getElementById('error');
+
+btn.addEventListener('click', toggleRecord);
+document.getElementById('tryAgain').addEventListener('click', reset);
+
+async function toggleRecord() {
+  if (isRecording) {
+    stopRecording();
+  } else {
+    await startRecording();
+  }
+}
+
+async function startRecording() {
+  try {
+    errorEl.classList.remove('active');
+    resultEl.classList.remove('active');
+
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+    audioCtx = new AudioContext();
+    analyser = audioCtx.createAnalyser();
+    analyser.fftSize = 2048;
+    mic = audioCtx.createMediaStreamSource(stream);
+    mic.connect(analyser);
+
+    isRecording = true;
+    recordStart = Date.now();
+    btn.classList.add('recording');
+    label.textContent = 'Recording... tap to stop';
+    visualize();
+  } catch (e) {
+    errorEl.textContent = 'Microphone access denied. Please allow mic access.';
+    errorEl.classList.add('active');
+  }
+}
+
+function stopRecording() {
+  isRecording = false;
+  btn.classList.remove('recording');
+  cancelAnimationFrame(animFrame);
+  bars.forEach(b => b.style.height = '4px');
+
+  const duration = (Date.now() - recordStart) / 1000;
+
+  // Gather audio features
+  const freqData = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(freqData);
+  const timeData = new Uint8Array(analyser.fftSize);
+  analyser.getByteTimeDomainData(timeData);
+
+  // Clean up audio
+  stream.getTracks().forEach(t => t.stop());
+  audioCtx.close();
+
+  // Analyze
+  const features = extractFeatures(freqData, timeData, duration);
+  showAnalyzing(features);
+}
+
+function extractFeatures(freqData, timeData, duration) {
+  // Dominant frequency bin
+  let maxVal = 0, maxIdx = 0;
+  for (let i = 0; i < freqData.length; i++) {
+    if (freqData[i] > maxVal) { maxVal = freqData[i]; maxIdx = i; }
+  }
+  const sampleRate = audioCtx.sampleRate || 44100;
+  const dominantFreq = (maxIdx * sampleRate) / (analyser.fftSize);
+
+  // Average loudness (RMS from time domain)
+  let sum = 0;
+  for (let i = 0; i < timeData.length; i++) {
+    const v = (timeData[i] - 128) / 128;
+    sum += v * v;
+  }
+  const rms = Math.sqrt(sum / timeData.length);
+
+  return { pitch: dominantFreq, loudness: rms, duration };
+}
+
+function matchBreed(features) {
+  let scores = BREEDS.map(breed => {
+    let score = 0;
+    const pMid = (breed.pitch[0] + breed.pitch[1]) / 2;
+    const pRange = breed.pitch[1] - breed.pitch[0];
+    score += Math.max(0, 1 - Math.abs(features.pitch - pMid) / (pRange * 1.5));
+
+    const lMid = (breed.loudness[0] + breed.loudness[1]) / 2;
+    const lRange = breed.loudness[1] - breed.loudness[0];
+    score += Math.max(0, 1 - Math.abs(features.loudness - lMid) / (lRange * 2));
+
+    const dMid = (breed.duration[0] + breed.duration[1]) / 2;
+    const dRange = breed.duration[1] - breed.duration[0];
+    score += Math.max(0, 1 - Math.abs(features.duration - dMid) / (dRange * 2));
+
+    // Add some randomness for fun
+    score += Math.random() * 0.5;
+    return { breed, score };
+  });
+
+  scores.sort((a, b) => b.score - a.score);
+  const best = scores[0];
+  const confidence = Math.min(97, Math.max(62, Math.round((best.score / 3.5) * 100)));
+  return { breed: best.breed, confidence };
+}
+
+function showAnalyzing(features) {
+  label.textContent = '';
+  analyzingEl.classList.add('active');
+
+  setTimeout(() => {
+    analyzingEl.classList.remove('active');
+    const match = matchBreed(features);
+    showResult(match);
+  }, 1800);
+}
+
+function showResult({ breed, confidence }) {
+  document.getElementById('resultEmoji').innerHTML = breed.emoji;
+  document.getElementById('resultBreed').textContent = breed.name;
+  document.getElementById('resultConf').textContent = confidence + '% match';
+
+  // Trait bars
+  const traitsEl = document.getElementById('traits');
+  traitsEl.innerHTML = '';
+  for (const [name, value] of Object.entries(breed.traits)) {
+    traitsEl.innerHTML += \`
+      <div class="trait">
+        <span class="trait-label">\${name}</span>
+        <div class="trait-track">
+          <div class="trait-fill" style="width: 0%; background: \${breed.color};"></div>
+        </div>
+      </div>\`;
+  }
+
+  // Facts
+  const factsEl = document.getElementById('resultFacts');
+  factsEl.innerHTML = breed.facts.map(f => '<li>' + f + '</li>').join('');
+
+  resultEl.classList.add('active');
+
+  // Animate trait bars
+  requestAnimationFrame(() => {
+    const fills = traitsEl.querySelectorAll('.trait-fill');
+    let i = 0;
+    for (const value of Object.values(breed.traits)) {
+      fills[i].style.width = value + '%';
+      i++;
+    }
+  });
+
+  label.textContent = '';
+}
+
+function reset() {
+  resultEl.classList.remove('active');
+  errorEl.classList.remove('active');
+  label.textContent = 'Tap to record a cluck';
+}
+
+function visualize() {
+  if (!isRecording) return;
+  const data = new Uint8Array(analyser.frequencyBinCount);
+  analyser.getByteFrequencyData(data);
+
+  const step = Math.floor(data.length / NUM_BARS);
+  for (let i = 0; i < NUM_BARS; i++) {
+    const val = data[i * step];
+    const h = Math.max(4, (val / 255) * 56);
+    bars[i].style.height = h + 'px';
+  }
+  animFrame = requestAnimationFrame(visualize);
+}
+</script>
+</body>
+</html>`;
+
+http.createServer((req, res) => {
+  res.writeHead(200, { 'Content-Type': 'text/html' });
+  res.end(html);
+}).listen(PORT, () => {
+  console.log('Cluck ID running at http://localhost:' + PORT);
+});
